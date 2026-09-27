@@ -28,7 +28,7 @@ import warnings, os, sys, json, textwrap, pickle, shutil
 warnings.filterwarnings('ignore')
 
 from hmmlearn.hmm import GaussianHMM
-from sklearn.preprocessing import StandardScaler
+from sklearn.preprocessing import StandardScaler, QuantileTransformer
 from sklearn.cluster import KMeans
 from scipy import stats
 from scipy.optimize import minimize
@@ -336,7 +336,7 @@ def fetch_live_market_data(start_date="2015-01-01"):
         # Conservative offset: shift monthly indices forward by 2 months so that
         # e.g. January data only becomes available from March onwards.
         macro.index = macro.index + pd.DateOffset(months=2)
-        macro_daily = macro.reindex(df.index, method='ffill').bfill()
+        macro_daily = macro.reindex(df.index, method='ffill')
         df['GSecYield10'] = macro_daily['GSecYield10']
         df['GSecYield2']  = macro_daily['GSecYield2']
         df['YieldCurve']  = df['GSecYield10'] - df['GSecYield2']
@@ -358,7 +358,7 @@ def fetch_live_market_data(start_date="2015-01-01"):
     if wpi_data is not None:
         # Apply publication lag: WPI releases are delayed ~6 weeks
         wpi_data.index = wpi_data.index + pd.DateOffset(months=2)
-        wpi_daily = wpi_data.reindex(df.index, method='ffill').bfill()
+        wpi_daily = wpi_data.reindex(df.index, method='ffill')
         df['WPI'] = wpi_daily
     else:
         df['WPI'] = 2.0  # fallback: recent average WPI inflation
@@ -688,7 +688,7 @@ def regularize_transmat(transmat, alpha=1.0, max_diag=0.97, min_offdiag=0.005):
 
     return reg
 
-def train_hmm(X_scaled, n_states=4, n_iter=500, n_init=20):
+def train_hmm(X_scaled, n_states=4, n_iter=100000, n_init=50):
     """
     Fits Gaussian HMM using Expectation-Maximization (EM / Baum-Welch) algorithm.
     Integrates K-Means smart EM initialization, covariance floor regularization,
@@ -747,48 +747,7 @@ def train_hmm(X_scaled, n_states=4, n_iter=500, n_init=20):
     return best_model
 
 
-def custom_em_step_demo(model, X_scaled, n_steps=3):
-    """
-    Demonstrates the Expectation-Maximization (Baum-Welch) step internals.
-    """
-    print(f"\nDemonstrating Baum-Welch (EM) parameter updates for {n_steps} iterations:")
-    curr_model = GaussianHMM(
-        n_components=model.n_components,
-        covariance_type='diag',
-        n_iter=1,
-        tol=1e-4,
-        init_params=''
-    )
-    curr_model.startprob_ = model.startprob_.copy()
-    curr_model.transmat_  = model.transmat_.copy()
-    curr_model.means_     = model.means_.copy()
-    curr_model.covars_    = model._covars_.copy() + 1e-3
 
-    for step in range(1, n_steps + 1):
-        curr_model.fit(X_scaled)
-        ll = curr_model.score(X_scaled)
-        diag_mean = np.diag(curr_model.transmat_).mean()
-        print(f"  [EM Step {step}] Log-Likelihood: {ll:.2f} | Mean State Persistence: {diag_mean:.3f}")
-
-
-def smooth_regimes(regime_series, min_hold=MIN_HOLD_DAYS):
-    """
-    Applies a minimum-holding-period filter to prevent high-frequency whipsaws.
-    """
-    smoothed = list(regime_series)
-    n = len(smoothed)
-    i = 0
-    while i < n:
-        current = smoothed[i]
-        j = i
-        while j < n and smoothed[j] == current:
-            j += 1
-        run_length = j - i
-        if run_length < min_hold and i > 0:
-            for k in range(i, j):
-                smoothed[k] = smoothed[i - 1]
-        i = j
-    return smoothed
 
 
 
@@ -858,15 +817,7 @@ def online_forward_decode(model, X_scaled):
 
     return states
 
-def posterior_weighted_exposure(posteriors_df):
-    """
-    Computes market exposure as probability-weighted blend across regimes.
-    """
-    exposure = pd.Series(0.0, index=posteriors_df.index)
-    for regime, exp in REGIME_EXPOSURE.items():
-        if regime in posteriors_df.columns:
-            exposure += posteriors_df[regime] * exp
-    return exposure
+
 
 
 def label_regimes(model, X_scaled, feat, df):
@@ -890,47 +841,17 @@ def label_regimes(model, X_scaled, feat, df):
         if mask.sum() > 0:
             state_centroids[s] = X_orig[mask].mean(axis=0)
 
-    regime_priors = {
-        # Features: ret_1d, vol_20d, price_vs_ma200, vix, drawdown, yield_curve, cpi_yoy, iip_yoy, wpi_yoy, real_rate
-        'Bull':     np.array([ 0.0008, 0.12,  0.08, 13.0, -0.02, 0.90, 4.50,   5.00, 3.50, 1.70]),
-        'Bear':     np.array([-0.0005, 0.18, -0.05, 15.0, -0.15, 1.30, 4.50,   5.00, 1.50, 1.30]),
-        'HighVol':  np.array([-0.0010, 0.35, -0.10, 35.0, -0.25, 2.20, 5.20, -15.00, 12.0, 0.00]),
-        'Sideways': np.array([ 0.0002, 0.13,  0.02, 17.0, -0.05, 1.45, 5.00,   6.50, 2.50, 0.85]),
+
+
+    # ── User Grounded Mapping: 3 is Bull, 1 is HighVol, 2 is Bear, 0 is Sideways ──
+    explicit_map = {
+        3: 'Bull',
+        1: 'HighVol',
+        2: 'Bear',
+        0: 'Sideways'
     }
-
-    all_centroids = np.array(list(state_centroids.values()))
-    centroid_mean = all_centroids.mean(axis=0)
-    centroid_std  = all_centroids.std(axis=0) + 1e-8
-
-    label_map = {}
-    assigned_regimes = set()
-    assigned_states  = set()
-
-    distances = []
-    for s, sc in state_centroids.items():
-        sc_norm = (sc - centroid_mean) / centroid_std
-        for regime, rp in regime_priors.items():
-            rp_norm = (rp - centroid_mean) / centroid_std
-            dist = np.sqrt(np.sum((sc_norm - rp_norm) ** 2))
-            distances.append((dist, s, regime))
-
-    distances.sort()
-    for _, s, regime in distances:
-        if s in assigned_states or regime in assigned_regimes:
-            continue
-        label_map[s] = {'name': regime, 'color': REGIME_COLORS[regime]}
-        assigned_states.add(s)
-        assigned_regimes.add(regime)
-
-    for s in state_centroids:
-        if s not in assigned_states:
-            for regime in ['Sideways', 'Bull', 'Bear', 'HighVol']:
-                if regime not in assigned_regimes:
-                    label_map[s] = {'name': regime, 'color': REGIME_COLORS[regime]}
-                    assigned_regimes.add(regime)
-                    break
-            else:
-                label_map[s] = {'name': 'Sideways', 'color': REGIME_COLORS['Sideways']}
+    label_map = {s: {'name': explicit_map.get(s, 'Sideways'), 'color': REGIME_COLORS[explicit_map.get(s, 'Sideways')]}
+                 for s in range(model.n_components)}
 
     scores = {}
     for s in range(model.n_components):
@@ -949,7 +870,7 @@ def label_regimes(model, X_scaled, feat, df):
                   f"Vol={m['mean_vol']*100:.1f}%ann  DD={m['mean_dd']*100:.1f}%  N={m['count']}")
 
     decoded_labels = np.array([label_map.get(s, {'name': 'Sideways'})['name'] for s in states])
-    decoded_labels = smooth_regimes(decoded_labels)
+    decoded_labels = smooth_regimes_causal(decoded_labels)
     decoded_colors = np.array([REGIME_COLORS.get(lab, '#3b82f6') for lab in decoded_labels])
 
     regime_posteriors = pd.DataFrame(index=feat.index)
@@ -1019,13 +940,7 @@ def walk_forward_validation(feat, df, df_sec=None, learned_sector_mix=None, trai
     fold_start = start_date + train_td
     folds      = []
 
-    regime_priors = {
-        # Features: ret_1d, vol_20d, price_vs_ma200, vix, drawdown, yield_curve, cpi_yoy, iip_yoy, wpi_yoy, real_rate
-        'Bull':     np.array([ 0.0008, 0.12,  0.08, 13.0, -0.02, 0.90, 4.50,   5.00, 3.50, 1.70]),
-        'Bear':     np.array([-0.0005, 0.18, -0.05, 15.0, -0.15, 1.30, 4.50,   5.00, 1.50, 1.30]),
-        'HighVol':  np.array([-0.0010, 0.35, -0.10, 35.0, -0.25, 2.20, 5.20, -15.00, 12.0, 0.00]),
-        'Sideways': np.array([ 0.0002, 0.13,  0.02, 17.0, -0.05, 1.45, 5.00,   6.50, 2.50, 0.85]),
-    }
+
 
     all_oos_daily = []  # Collect (date, daily_return) for chained equity curve
 
@@ -1041,47 +956,41 @@ def walk_forward_validation(feat, df, df_sec=None, learned_sector_mix=None, trai
         X_train = select_features_for_hmm(feat.loc[train_mask]).values
         X_test  = select_features_for_hmm(feat.loc[test_mask]).values
 
-        X_train_s = scaler.fit_transform(X_train)
-        X_test_s  = scaler.transform(X_test)
+        scaler_fold = QuantileTransformer(output_distribution='normal', n_quantiles=min(1000, max(20, len(X_train))), random_state=42)
+        X_train_s = scaler_fold.fit_transform(X_train)
+        X_test_s  = scaler_fold.transform(X_test)
 
         model = train_hmm(X_train_s, n_states=n_states, n_iter=150, n_init=3)
 
         # Decode training labels (Viterbi on TRAINING data is fine — it's IS)
         _, states_train = model.decode(X_train_s, algorithm='viterbi')
 
-        # ── Centroid-anchored regime labeling (same as before) ──
-        state_centroids = {}
+        # ── Dynamic training-set regime labeling (solves label switching across folds) ──
+        train_dates = all_dates[train_mask]
+        train_returns = df.loc[train_dates, 'Returns'].values
+
+        state_stats = {}
         for s in range(n_states):
             m = (states_train == s)
-            if m.sum() > 0:
-                state_centroids[s] = X_train[m].mean(axis=0)
-            else:
-                state_centroids[s] = X_train.mean(axis=0)
+            state_stats[s] = {
+                'ann_ret': float(train_returns[m].mean() * 252 * 100) if m.sum() > 0 else 0.0,
+                'ann_vol': float(train_returns[m].std() * np.sqrt(252) * 100) if m.sum() > 0 else 0.0,
+            }
 
-        all_c = np.array(list(state_centroids.values()))
-        c_mean = all_c.mean(axis=0)
-        c_std  = all_c.std(axis=0) + 1e-8
+        # Dynamic assignment strictly on training data
+        s_highvol = max(range(n_states), key=lambda s: state_stats[s]['ann_vol'])
+        rem = [s for s in range(n_states) if s != s_highvol]
+        rem_sorted = sorted(rem, key=lambda s: state_stats[s]['ann_ret'])
+        s_bear = rem_sorted[0]
+        s_sideways = rem_sorted[1]
+        s_bull = rem_sorted[2]
 
-        lmap = {}
-        assigned_r = set()
-        assigned_s = set()
-        dists = []
-        for s, sc in state_centroids.items():
-            sc_n = (sc - c_mean) / c_std
-            for regime, rp in regime_priors.items():
-                rp_n = (rp - c_mean) / c_std
-                d = np.sqrt(np.sum((sc_n - rp_n) ** 2))
-                dists.append((d, s, regime))
-        dists.sort()
-        for _, s, regime in dists:
-            if s in assigned_s or regime in assigned_r:
-                continue
-            lmap[s] = regime
-            assigned_s.add(s)
-            assigned_r.add(regime)
-        for s in state_centroids:
-            if s not in assigned_s:
-                lmap[s] = 'Sideways'
+        lmap = {
+            s_bull: 'Bull',
+            s_bear: 'Bear',
+            s_highvol: 'HighVol',
+            s_sideways: 'Sideways'
+        }
 
         # ── FIX 1: Causal online forward decode (no batch Viterbi on OOS) ──
         states_test = online_forward_decode(model, X_test_s)
@@ -1092,7 +1001,6 @@ def walk_forward_validation(feat, df, df_sec=None, learned_sector_mix=None, trai
 
         # ── FIX 3: Per-fold sector mix learning from TRAINING DATA ONLY ──
         train_labels = [lmap.get(s, 'Sideways') for s in states_train]
-        train_dates = all_dates[train_mask]
         train_sec_common = train_dates.intersection(df_sec.index)
 
         fold_sector_mix = {}
@@ -1110,42 +1018,28 @@ def walk_forward_validation(feat, df, df_sec=None, learned_sector_mix=None, trai
 
             sec_rets = df_sec.loc[common_reg, sector_names].values
             mean_ret = sec_rets.mean(axis=0)
-            cov_mat  = np.cov(sec_rets, rowvar=False)
+            cov_mat  = np.cov(sec_rets, rowvar=False) + np.eye(len(sector_names)) * 1e-6
+            fold_sector_mix[reg] = optimize_sector_weights(mean_ret, cov_mat, reg, sector_names, rf_daily)
 
-            # Regularize covariance for numerical stability
-            cov_mat += np.eye(len(sector_names)) * 1e-6
-
-            def neg_sharpe(w):
-                p_ret = np.dot(w, mean_ret) - rf_daily
-                p_vol = np.sqrt(np.dot(w, np.dot(cov_mat, w)) + 1e-8)
-                return -p_ret / (p_vol + 1e-8)
-
-            n_sec = len(sector_names)
-            bounds = [(0.0, 0.40) for _ in range(n_sec)]
-            constraints = ({'type': 'eq', 'fun': lambda w: np.sum(w) - 1.0})
-            init_w = np.ones(n_sec) / n_sec
-
-            sol = minimize(neg_sharpe, init_w, method='SLSQP', bounds=bounds, constraints=constraints)
-            best_w = sol.x if sol.success else init_w
-            best_w = np.maximum(best_w, 0.0)
-            best_w /= best_w.sum()
-            fold_sector_mix[reg] = {sec: round(float(w), 3) for sec, w in zip(sector_names, best_w)}
-
-        # ── Compute OOS returns using fold-specific sector mix ──
+        # ── FIX 4: Strictly T+1 Execution (Regime at t dictates weights traded on t+1) ──
         oos_idx = all_dates[test_mask]
         tc_returns = []
         prev_regime = oos_labels[0]
-        for dt, lab in zip(oos_idx, oos_labels):
-            weights = fold_sector_mix.get(lab, {})
-            if dt in df_sec.index:
-                port_daily = sum(weights.get(s, 0.0) * float(df_sec.loc[dt, s])
-                                 for s in sector_names if s in df_sec.columns and not pd.isna(df_sec.loc[dt, s]))
+        for i in range(len(oos_idx) - 1):
+            dt_signal = oos_idx[i]
+            reg_signal = oos_labels[i]
+            dt_trade = oos_idx[i + 1]
+
+            weights = fold_sector_mix.get(reg_signal, {})
+            if dt_trade in df_sec.index:
+                port_daily = sum(weights.get(s, 0.0) * float(df_sec.loc[dt_trade, s])
+                                 for s in sector_names if s in df_sec.columns and not pd.isna(df_sec.loc[dt_trade, s]))
             else:
-                port_daily = float(df.loc[dt, 'Returns'])
-            tc = TC_TOTAL if (lab != prev_regime) else 0.0
+                port_daily = float(df.loc[dt_trade, 'Returns'])
+            tc = TC_TOTAL if (reg_signal != prev_regime) else 0.0
             daily = port_daily - tc
             tc_returns.append(daily)
-            prev_regime = lab
+            prev_regime = reg_signal
 
         tc_returns = np.array(tc_returns)
         cum_ret = np.exp(tc_returns.sum()) - 1.0
@@ -1175,8 +1069,8 @@ def walk_forward_validation(feat, df, df_sec=None, learned_sector_mix=None, trai
             'regime_dist':   pd.Series(oos_labels).value_counts().to_dict(),
         })
 
-        # Store daily OOS returns with their dates for chained equity curve
-        for d, r in zip(oos_idx, tc_returns):
+        # Store daily OOS returns with their dates for chained equity curve (T+1 traded dates)
+        for d, r in zip(oos_idx[1:], tc_returns):
             all_oos_daily.append((d, r))
 
         print(f"  Fold {fold_start.strftime('%Y-%m')} → {fold_end.strftime('%Y-%m')} | "
@@ -1205,50 +1099,7 @@ def walk_forward_validation(feat, df, df_sec=None, learned_sector_mix=None, trai
     return folds_df, oos_daily_series
 
 
-# ══════════════════════════════════════════════════════════════════════
-# 6. STRATEGY BACKTEST WITH TRANSACTION COSTS
-# ══════════════════════════════════════════════════════════════════════
 
-def compute_strategy_payoff_with_tc(result, initial_capital=1_000_000):
-    """
-    Regime-switching backtest using posterior-weighted exposure model.
-    Applies TC on regime switches. Uses smoothed regime labels.
-    """
-    buy_hold_capital = initial_capital * np.exp(np.cumsum(result['Returns'].values))
-
-    strategy_returns = np.zeros(len(result))
-    tc_drag = np.zeros(len(result))
-    n_switches = 0
-    prev_regime = result['Regime'].iloc[0]
-
-    for i, (_, row) in enumerate(result.iterrows()):
-        regime  = row['Regime']
-        mkt_ret = row['Returns']
-
-        exposure = 0.0
-        for reg_name, exp_val in REGIME_EXPOSURE.items():
-            if reg_name in row.index:
-                exposure += row[reg_name] * exp_val
-
-        switched = (regime != prev_regime)
-        tc       = TC_TOTAL if switched else 0.0
-        if switched:
-            n_switches += 1
-            tc_drag[i] = tc
-
-        # Unallocated cash earns the prevailing risk-free rate at that time (RBI Repo Rate)
-        rf_daily = (row['RepoRate'] / 100.0 / 252.0) if ('RepoRate' in row and not pd.isna(row['RepoRate'])) else (0.06 / 252.0)
-        strategy_returns[i] = exposure * mkt_ret + (1.0 - exposure) * rf_daily - tc
-        prev_regime = regime
-
-    strategy_capital = initial_capital * np.exp(np.cumsum(strategy_returns))
-
-    total_tc = tc_drag.sum() * 100
-    print(f"\n✓ Backtest (posterior-weighted exposure model)")
-    print(f"  Total regime switches : {n_switches}")
-    print(f"  Cumulative TC drag    : {total_tc:.2f}% of capital")
-
-    return strategy_returns, strategy_capital, buy_hold_capital, n_switches, total_tc
 
 
 def compute_performance_metrics(returns, capital, risk_free=0.06):
@@ -1280,12 +1131,35 @@ def compute_performance_metrics(returns, capital, risk_free=0.06):
 # 7. SECTOR ROTATION ANALYSIS (100% Real Live Sector Data)
 # ══════════════════════════════════════════════════════════════════════
 
+# ══════════════════════════════════════════════════════════════════════
+# 6. DYNAMIC SECTOR ROTATION ALLOCATION & OPTIMIZATION
+# ══════════════════════════════════════════════════════════════════════
+
+def optimize_sector_weights(mean_ret, cov_mat, regime=None, sector_names=None, rf_daily=0.06/252, max_cap=0.40):
+    """
+    Strictly allocates in sectors that have performed best in that regime in the past
+    by solving Sharpe ratio maximization on historical returns (capped at max_cap=0.40 per sector).
+    """
+    n_sec = len(sector_names)
+    bounds = [(0.0, max_cap) for _ in range(n_sec)]
+    constraints = ({'type': 'eq', 'fun': lambda w: np.sum(w) - 1.0})
+
+    def neg_sharpe(w):
+        p_ret = np.dot(w, mean_ret) - rf_daily
+        p_vol = np.sqrt(np.dot(w, np.dot(cov_mat, w)) + 1e-8)
+        return -p_ret / (p_vol + 1e-8)
+
+    init_w = np.ones(n_sec) / n_sec
+    sol = minimize(neg_sharpe, init_w, method='SLSQP', bounds=bounds, constraints=constraints)
+    best_w = sol.x if sol.success else init_w
+    best_w = np.maximum(best_w, 0.0)
+    best_w /= best_w.sum()
+    return {sec: round(float(w), 3) for sec, w in zip(sector_names, best_w)}
+
 def learn_optimal_sector_mix(result, df_sec=None):
     """
     Dynamically learns the optimal sector allocation mix for each regime
-    by solving a constrained Sharpe ratio maximization problem on real market data.
-    Updates automatically whenever new market data is added.
-    Uses 100% real live sector data from Yahoo Finance.
+    by strictly allocating to the best-performing sectors in that regime in the past via Sharpe maximization.
     """
     regimes_order = ['Bull', 'Bear', 'HighVol', 'Sideways']
     sector_names = ['BANKBEES', 'ITBEES', 'PHARMABEES', 'AUTOBEES', 'METALIETF', 'MOREALTY', 'CPSEETF', 'INFRABEES']
@@ -1308,23 +1182,8 @@ def learn_optimal_sector_mix(result, df_sec=None):
             continue
 
         mean_ret = np.average(sec_sub, axis=0, weights=posteriors)
-        cov_mat  = np.cov(sec_sub, rowvar=False, aweights=posteriors)
-
-        def neg_sharpe(w):
-            p_ret = np.dot(w, mean_ret) - rf_daily
-            p_vol = np.sqrt(np.dot(w, np.dot(cov_mat, w)) + 1e-8)
-            return -p_ret / (p_vol + 1e-8)
-
-        n_sec = len(sector_names)
-        bounds = [(0.0, 0.40) for _ in range(n_sec)]
-        constraints = ({'type': 'eq', 'fun': lambda w: np.sum(w) - 1.0})
-        init_w = np.ones(n_sec) / n_sec
-
-        sol = minimize(neg_sharpe, init_w, method='SLSQP', bounds=bounds, constraints=constraints)
-        best_w = sol.x if sol.success else init_w
-        best_w = np.maximum(best_w, 0.0)
-        best_w /= best_w.sum()
-        learned_mix[reg] = {sec: round(float(w), 3) for sec, w in zip(sector_names, best_w)}
+        cov_mat  = np.cov(sec_sub, rowvar=False, aweights=posteriors) + np.eye(len(sector_names)) * 1e-6
+        learned_mix[reg] = optimize_sector_weights(mean_ret, cov_mat, reg, sector_names, rf_daily)
 
     print("\n✓ Dynamically learned optimal sector mix for each regime from real market data:")
     for reg in regimes_order:
@@ -1338,7 +1197,7 @@ def learn_optimal_sector_mix(result, df_sec=None):
 def compute_sector_rotation_returns(result, learned_sector_mix, df_sec=None):
     """
     Simulate sector-rotation performance using dynamically learned optimal sector weights
-    applied to real historical sector returns.
+    applied to real historical sector returns with strict T+1 execution.
     """
     sector_names = ['BANKBEES', 'ITBEES', 'PHARMABEES', 'AUTOBEES', 'METALIETF', 'MOREALTY', 'CPSEETF', 'INFRABEES']
 
@@ -1349,9 +1208,12 @@ def compute_sector_rotation_returns(result, learned_sector_mix, df_sec=None):
     res_sub = result.loc[common_idx]
     sec_sub = df_sec.loc[common_idx]
 
+    # Strict T+1 execution: regime determined at close of t-1 dictates weights for day t
+    regime_signals = res_sub['Regime'].shift(1).fillna(res_sub['Regime'].iloc[0])
+
     portfolio_returns = pd.Series(0.0, index=common_idx)
-    for idx, row in res_sub.iterrows():
-        regime  = row['Regime']
+    for idx in common_idx:
+        regime  = regime_signals.loc[idx]
         weights = learned_sector_mix.get(regime, {})
         port_r  = sum(weights.get(s, 0.0) * float(sec_sub.loc[idx, s])
                       for s in sector_names if s in weights and not pd.isna(sec_sub.loc[idx, s]))
@@ -1359,7 +1221,7 @@ def compute_sector_rotation_returns(result, learned_sector_mix, df_sec=None):
 
     ann_ret = (np.exp(portfolio_returns.mean() * 252) - 1) * 100
     sharpe  = (portfolio_returns.mean() - 0.06/252) / (portfolio_returns.std() + 1e-8) * np.sqrt(252)
-    print(f"\n✓ Sector Rotation Portfolio (Data-Driven Mix) | Ann. Return: {ann_ret:.1f}% | Sharpe: {sharpe:.2f}")
+    print(f"\n✓ Sector Rotation Portfolio (Data-Driven Mix, Strict T+1) | Ann. Return: {ann_ret:.1f}% | Sharpe: {sharpe:.2f}")
 
     return portfolio_returns, sec_sub
 
@@ -2311,189 +2173,6 @@ def plot_new_macro_signals(result, out_dir):
     print("✓ Saved: fig8_new_macro_signals.png")
 
 
-# ══════════════════════════════════════════════════════════════════════
-# 10. FASTAPI SERVICE CODE
-# ══════════════════════════════════════════════════════════════════════
-
-FASTAPI_APP_CODE = '''"""
-India HMM Regime Detector — FastAPI Service
-=============================================
-Serves the trained HMM model as a REST API.
-The React dashboard (or any client) can POST market features
-and receive a real-time regime prediction.
-
-Install:
-    pip install fastapi uvicorn hmmlearn scikit-learn numpy pandas
-
-Run:
-    uvicorn regime_api:app --host 0.0.0.0 --port 8000
-"""
-
-from fastapi import FastAPI, HTTPException
-from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel, Field
-from typing import Dict, Optional
-import pickle, os, json
-import numpy as np
-import pandas as pd
-
-app = FastAPI(
-    title="India HMM Regime Detector API",
-    description="Probabilistic market regime detection for NIFTY 50 (Gaussian HMM)",
-    version="2.0.0",
-)
-
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
-ARTIFACT_DIR = os.path.dirname(__file__)
-MODEL_PATH   = os.path.join(ARTIFACT_DIR, "hmm_model.pkl")
-SCALER_PATH  = os.path.join(ARTIFACT_DIR, "hmm_scaler.pkl")
-LABEL_PATH   = os.path.join(ARTIFACT_DIR, "label_map.pkl")
-MIX_PATH     = os.path.join(ARTIFACT_DIR, "learned_sector_mix.json")
-
-_model      = None
-_scaler     = None
-_label_map  = None
-_learned_sector_mix = {}
-
-def load_artifacts():
-    global _model, _scaler, _label_map, _learned_sector_mix
-    if os.path.exists(MODEL_PATH):
-        with open(MODEL_PATH, 'rb') as f:
-            _model = pickle.load(f)
-    if os.path.exists(SCALER_PATH):
-        with open(SCALER_PATH, 'rb') as f:
-            _scaler = pickle.load(f)
-    if os.path.exists(LABEL_PATH):
-        with open(LABEL_PATH, 'rb') as f:
-            _label_map = pickle.load(f)
-    if os.path.exists(MIX_PATH):
-        with open(MIX_PATH, 'r') as f:
-            _learned_sector_mix = json.load(f)
-
-@app.on_event("startup")
-def startup():
-    load_artifacts()
-
-class MarketFeatures(BaseModel):
-    ret_1d:         float = Field(..., description="1-day return")
-    vol_20d:        float = Field(..., description="20-day annualized realized volatility")
-    price_vs_ma200: float = Field(..., description="Distance from 200-day moving average")
-    vix:            float = Field(..., description="India VIX level")
-    drawdown:       float = Field(..., description="Drawdown from all-time peak (negative)")
-    yield_curve:    float = Field(..., description="10Y - 2Y sovereign yield curve spread (%)")
-    cpi_yoy:        float = Field(..., description="Consumer Price Index YoY inflation (%)")
-    iip_yoy:        float = Field(..., description="Index of Industrial Production YoY growth (%)")
-    wpi_yoy:        float = Field(..., description="Wholesale Price Index YoY inflation (%)")
-    real_rate:      float = Field(..., description="Real policy rate: Repo Rate - CPI (%)")
-
-REGIME_EXPOSURE = {
-    "Bull":     1.0,
-    "Bear":     0.0,
-    "HighVol":  0.2,
-    "Sideways": 0.6,
-}
-
-@app.get("/health")
-def health():
-    return {
-        "status": "online",
-        "model_loaded": _model is not None,
-        "n_states": _model.n_components if _model else None,
-    }
-
-@app.post("/regime/predict")
-def predict_regime(features: MarketFeatures):
-    if _model is None or _scaler is None:
-        raise HTTPException(503, "HMM model not loaded. Run train pipeline first.")
-
-    raw = np.array([[
-        features.ret_1d,
-        features.vol_20d,
-        features.price_vs_ma200,
-        features.vix,
-        features.drawdown,
-        features.yield_curve,
-        features.cpi_yoy,
-        features.iip_yoy,
-        features.wpi_yoy,
-        features.real_rate,
-    ]])
-
-    scaled = _scaler.transform(raw)
-    state = int(_model.predict(scaled)[0])
-    posteriors = _model.predict_proba(scaled)[0]
-
-    s_name = _label_map.get(state, {}).get("name", "Sideways") if _label_map else f"State_{state}"
-    color  = _label_map.get(state, {}).get("color", "#3b82f6") if _label_map else "#3b82f6"
-
-    probs = {}
-    if _label_map:
-        for s_idx, prob in enumerate(posteriors):
-            r = _label_map.get(s_idx, {}).get("name", f"State_{s_idx}")
-            probs[r] = round(float(prob), 4)
-
-    exp = sum(probs.get(r, 0.0) * REGIME_EXPOSURE.get(r, 0.5) for r in probs)
-    return {
-        "regime": s_name,
-        "color": color,
-        "market_exposure": round(exp, 4),
-        "posteriors": probs,
-        "recommended_sector_mix": _learned_sector_mix.get(s_name, {})
-    }
-
-@app.get("/regime/strategy")
-def regime_strategy(regime: str):
-    if regime not in REGIME_EXPOSURE:
-        raise HTTPException(400, f"Unknown regime. Choose from: {list(REGIME_EXPOSURE.keys())}")
-    eq = REGIME_EXPOSURE[regime]
-    return {
-        "regime": regime,
-        "equity_exposure": eq,
-        "cash_exposure": round(1.0 - eq, 2),
-        "sector_mix": _learned_sector_mix.get(regime, {})
-    }
-
-@app.get("/regime/current")
-def current_regime():
-    csv_path = os.path.join(ARTIFACT_DIR, "regime_history_v2.csv")
-    if not os.path.exists(csv_path):
-        raise HTTPException(503, "Regime history data not available.")
-    df = pd.read_csv(csv_path, index_col=0, parse_dates=True)
-    latest = df.iloc[-1]
-    curr_reg = latest["Regime"]
-    probs = {
-        "Bull": round(float(latest.get("Bull", 0.0)), 4),
-        "Bear": round(float(latest.get("Bear", 0.0)), 4),
-        "HighVol": round(float(latest.get("HighVol", 0.0)), 4),
-        "Sideways": round(float(latest.get("Sideways", 0.0)), 4),
-    }
-    exp = sum(probs.get(r, 0.0) * REGIME_EXPOSURE.get(r, 0.5) for r in probs)
-    return {
-        "date": str(latest.name)[:10],
-        "regime": curr_reg,
-        "nifty": float(latest.get("NIFTY", 0)),
-        "vix": float(latest.get("VIX", 0)),
-        "cpi": float(latest.get("CPI", 0)),
-        "wpi": float(latest.get("WPI", 0)),
-        "yield_curve": float(latest.get("YieldCurve", 0)),
-        "posteriors": probs,
-        "market_exposure": round(exp, 4),
-        "recommended_sector_mix": _learned_sector_mix.get(curr_reg, {}),
-    }
-'''
-
-
-# ══════════════════════════════════════════════════════════════════════
-# 11. MAIN PIPELINE
-# ══════════════════════════════════════════════════════════════════════
-
 def main():
     print("=" * 70)
     print("  INDIA MARKET REGIME DETECTOR  —  v2 (100% Real Live Data)")
@@ -2526,15 +2205,15 @@ def main():
 
     # ── 3. Model selection (BIC / AIC) ───────────────────────────────
     print("\n[3] Model selection: comparing 3-state / 4-state / 5-state HMMs...")
-    scaler    = StandardScaler()
+    # Scale features to Gaussian normal distribution (output_distribution='normal')
+    scaler    = QuantileTransformer(output_distribution='normal', n_quantiles=1000, random_state=42)
     X_scaled  = scaler.fit_transform(select_features_for_hmm(feat).values)
     selection_results, best_k = bic_aic_model_selection(X_scaled, state_range=(3, 4, 5), n_init=5)
     n_states = 4
 
     # ── 4. Train final HMM ───────────────────────────────────────────
-    print(f"\n[4] Training {n_states}-state HMM (full dataset, 15 restarts)...")
-    model  = train_hmm(X_scaled, n_states=n_states, n_iter=200, n_init=15)
-    custom_em_step_demo(model, X_scaled, n_steps=3)
+    print(f"\n[4] Training {n_states}-state HMM (full dataset, 50 restarts, 100,000 max iters)...")
+    model  = train_hmm(X_scaled, n_states=n_states, n_iter=100000, n_init=50)
 
     # ── 5. Decode regimes ────────────────────────────────────────────
     print("\n[5] Decoding regimes (Viterbi + Forward-Backward)...")
@@ -2564,8 +2243,6 @@ def main():
     print("\n[8] Computing Sector Rotation Performance Scorecard (TC-adjusted)...")
     metrics = compute_performance_metrics(strat_ret, strat_cap)
     bh_metrics = compute_performance_metrics(result['Returns'].values, bh_cap)
-    tact_ret, tact_cap, _, _, _ = compute_strategy_payoff_with_tc(result)
-    tact_metrics = compute_performance_metrics(tact_ret, tact_cap)
 
     print("\n  ┌── Strategy Performance Scorecard vs Buy & Hold ─────────────────────┐")
     print(f"  │  Metric          Sector Rotation       Buy & Hold        │")
@@ -2573,7 +2250,6 @@ def main():
                      ('sortino','Sortino'), ('profit_factor','Profit Factor'),
                      ('max_dd','Max Drawdown'), ('calmar','Calmar'), ('win_rate','Win Rate')]:
         sv = metrics[k] * (100 if k in ('ann_return','max_dd','win_rate') else 1)
-        tv = tact_metrics[k] * (100 if k in ('ann_return','max_dd','win_rate') else 1)
         bv = bh_metrics[k] * (100 if k in ('ann_return','max_dd','win_rate') else 1)
         sfx = '%' if k in ('ann_return','max_dd','win_rate') else ''
         print(f"  │  {label:16s}  {sv:+8.2f}{sfx}              {bv:+8.2f}{sfx}       │")
@@ -2653,11 +2329,7 @@ def main():
         json.dump(learned_sector_mix, f, indent=2)
     print("✓ Saved hmm_model.pkl, hmm_scaler.pkl, label_map.pkl, and learned_sector_mix.json to " + OUT_DIR)
 
-    # ── 11. Save FastAPI app ──────────────────────────────────────────
-    print("\n[11] Writing FastAPI service to regime_api.py...")
-    with open(f'{OUT_DIR}/regime_api.py', 'w') as f:
-        f.write(FASTAPI_APP_CODE)
-    print("✓ Saved: regime_api.py  (run with: uvicorn regime_api:app --reload)")
+
 
     # ── 12. Visualisations (Pure Sector Rotation Strategy) ────────────
     print("\n[12] Generating figures (1-8) featuring Pure Sector Rotation Strategy...")
