@@ -153,12 +153,12 @@ Let $S_t \in \{1, 2, \dots, K\}$ denote the unobserved market regime on trading 
 
 $$P(S_t = j \mid S_{t-1} = i) = A_{ij}$$
 
-where $A \in \mathbb{R}^{K 	imes K}$ is the stochastic transition probability matrix satisfying $\sum_{j=1}^K A_{ij} = 1$ for all $i$.
+where $A \in \mathbb{R}^{K 	\times K}$ is the stochastic transition probability matrix satisfying $\sum_{j=1}^K A_{ij} = 1$ for all $i$.
 
 Conditional on the active regime $S_t = k$, the observed feature vector $X_t \in \mathbb{R}^D$ ($D=10$) follows a multivariate Gaussian emission distribution:
 
 $$P(X_t \mid S_t = k) = \mathcal{N}\left(X_t \mid \mu_k, \Sigma_k
-ight)$$
+\right)$$
 
 where $\mu_k \in \mathbb{R}^D$ is the state-specific mean vector, and $\Sigma_k \in \mathbb{R}^{D 	imes D}$ is a regularized diagonal covariance matrix (`min_covar=1e-3`).
 
