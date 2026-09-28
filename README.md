@@ -160,7 +160,7 @@ Conditional on the active regime $S_t = k$, the observed feature vector $X_t \in
 $$P(X_t \mid S_t = k) = \mathcal{N}\left(X_t \mid \mu_k, \Sigma_k
 \right)$$
 
-where $\mu_k \in \mathbb{R}^D$ is the state-specific mean vector, and $\Sigma_k \in \mathbb{R}^{D 	imes D}$ is a regularized diagonal covariance matrix (`min_covar=1e-3`).
+where $\mu_k \in \mathbb{R}^D$ is the state-specific mean vector, and $\Sigma_k \in \mathbb{R}^{D 	\times D}$ is a regularized diagonal covariance matrix (`min_covar=1e-3`).
 
 ### Feature Engineering (10 Market & Macro Signals)
 
