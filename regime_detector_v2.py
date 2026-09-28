@@ -688,7 +688,7 @@ def regularize_transmat(transmat, alpha=1.0, max_diag=0.97, min_offdiag=0.005):
 
     return reg
 
-def train_hmm(X_scaled, n_states=4, n_iter=100000, n_init=50):
+def train_hmm(X_scaled, n_states=4, n_iter=50000, n_init=200):
     """
     Fits Gaussian HMM using Expectation-Maximization (EM / Baum-Welch) algorithm.
     Integrates K-Means smart EM initialization, covariance floor regularization,
@@ -931,7 +931,7 @@ def label_regimes(model, X_scaled, feat, df):
 # 5. WALK-FORWARD VALIDATION
 # ══════════════════════════════════════════════════════════════════════
 
-def walk_forward_validation(feat, df, df_sec=None, learned_sector_mix=None, train_years=3, test_months=2, n_states=4):
+def walk_forward_validation(feat, df, df_sec=None, learned_sector_mix=None, train_years=3, test_months=2, n_states=4, test_noise_std=0.0, random_seed=42):
     """
     Strictly causal walk-forward validation — no lookahead bias.
 
@@ -982,7 +982,12 @@ def walk_forward_validation(feat, df, df_sec=None, learned_sector_mix=None, trai
 
         scaler_fold = QuantileTransformer(output_distribution='normal', n_quantiles=min(1000, max(20, len(X_train))), random_state=42)
         X_train_s = scaler_fold.fit_transform(X_train)
-        X_test_s  = scaler_fold.transform(X_test)
+        if test_noise_std > 0:
+            np.random.seed(random_seed + len(folds))
+            noise = np.random.normal(0, test_noise_std * (X_train.std(axis=0) + 1e-8), size=X_test.shape)
+            X_test_s = scaler_fold.transform(X_test + noise)
+        else:
+            X_test_s = scaler_fold.transform(X_test)
 
         model = train_hmm(X_train_s, n_states=n_states, n_iter=150, n_init=3)
 
@@ -2245,8 +2250,8 @@ def main():
     n_states = 4
 
     # ── 4. Train final HMM ───────────────────────────────────────────
-    print(f"\n[4] Training {n_states}-state HMM (full dataset, 50 restarts, 100,000 max iters)...")
-    model  = train_hmm(X_scaled, n_states=n_states, n_iter=100000, n_init=50)
+    print(f"\n[4] Training {n_states}-state HMM (full dataset)...")
+    model  = train_hmm(X_scaled, n_states=n_states, n_iter=50000, n_init=200)
 
     # ── 5. Decode regimes ────────────────────────────────────────────
     print("\n[5] Decoding regimes (Viterbi + Forward-Backward)...")
