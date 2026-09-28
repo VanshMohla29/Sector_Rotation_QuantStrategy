@@ -166,10 +166,10 @@ where $\mu_k \in \mathbb{R}^D$ is the state-specific mean vector, and $\Sigma_k 
 
 1. **Daily Log Return ($r_t$)**: $r_t = \ln(P_t / P_{t-1})$ — core price dynamics and directional drift.
 2. **20-Day Realized Annualized Volatility ($\sigma_{20d}$)**: High-frequency market turbulence gauge.
-3. **Trend Ratio ($P_t / 	ext{SMA}_{200}(P_t) - 1$)**: Measures long-term secular market regime positioning.
-4. **India VIX Level ($	ext{VIX}_t$)**: Forward-looking implied option volatility & panic sensor.
-5. **Peak-to-Trough Drawdown ($	ext{DD}_t$)**: Structural risk and market distress metric.
-6. **Yield Curve Spread ($10	ext{Y} - 2	ext{Y}$)**: Sovereign yield curve slope via official FRED feeds.
+3. **Trend Ratio ($P_t / 	\text{SMA}_{200}(P_t) - 1$)**: Measures long-term secular market regime positioning.
+4. **India VIX Level ($	\text{VIX}_t$)**: Forward-looking implied option volatility & panic sensor.
+5. **Peak-to-Trough Drawdown ($	\text{DD}_t$)**: Structural risk and market distress metric.
+6. **Yield Curve Spread ($10	\text{Y} - 2	\text{Y}$)**: Sovereign yield curve slope via official FRED feeds.
 7. **CPI YoY Inflation Rate**: Official Consumer Price Index annual change from FRED.
 8. **IIP YoY Growth**: Official Index of Industrial Production growth from FRED.
 9. **WPI YoY Inflation Rate**: Official Wholesale Price Index inflation from DPIIT. Uses the actively-updated 2022-23 base series as primary source, with 2011-12 series as historical backfill for months before Apr 2024.
