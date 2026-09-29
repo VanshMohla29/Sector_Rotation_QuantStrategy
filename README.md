@@ -12,7 +12,7 @@
 ---
 
 ## Table of Contents
-$$\max_{w} \left( \frac{w^T \bar{\mu} - r_f}{\sqrt{w^T \Sigma w}} - \lambda_{\text{turnover}} \sum_{i=1}^N |w_i - w_{i, \text{prev}}| \right)$$
+
 1. [Executive Summary](#executive-summary)
 2. [High-Level Architecture](#high-level-architecture)
 3. [100% Real Live Data Architecture & Sources](#1-100-real-live-data-architecture--sources)
