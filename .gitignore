@@ -1,0 +1,33 @@
+# Environment & Secrets (NEVER COMMIT)
+.env
+.env.local
+*.env
+*.pem
+*.key
+
+# macOS System Files
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Python Bytecode & Cache
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+.venv/
+build/
+dist/
+*.egg-info/
+
+# Logs & Runner Artifacts
+*.log
+alert_runner.log
+
+# Local Backups
+*BACKUP*
+*_BACKUP*
+*_backup*
