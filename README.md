@@ -198,16 +198,25 @@ To ensure institutional robustness against upstream feed corruption:
 
 ### Gaussian Hidden Markov Model Formulation
 
-Let $S_t \in \{1, 2, 3, 4\}$ denote the unobserved market regime on trading day $t$, and let $\mathbf{x}_t \in \mathbb{R}^{11}$ denote the observed vector of market and macroeconomic features.
+Let $S_t \in \{1, 2, 3, 4\}$ denote the unobserved market regime on trading day $t$, and let $\mathbf{x}_t \in \mathbb{R}^{11}$ denote the observed vector of 11 market and macroeconomic features.
 
-The model is defined by:
-1. **Initial State Distribution**:
+The system is parameterized by $\lambda = (\boldsymbol{\pi}, \mathbf{A}, \mathbf{B})$:
+
+1. **Initial State Distribution** $\boldsymbol{\pi} \in \mathbb{R}^4$:
    $$\pi_i = P(S_1 = i), \quad \sum_{i=1}^4 \pi_i = 1$$
-2. **Transition Probability Matrix** $A \in \mathbb{R}^{4 \times 4}$:
+
+2. **Transition Probability Matrix** $\mathbf{A} \in \mathbb{R}^{4 \times 4}$:
    $$A_{ij} = P(S_{t+1} = j \mid S_t = i), \quad \sum_{j=1}^4 A_{ij} = 1$$
-3. **Emission Probability Distribution**:
-   $$P(\mathbf{x}_t \mid S_t = i) = \mathcal{N}(\mathbf{x}_t \mid \boldsymbol{\mu}_i, \boldsymbol{\Sigma}_i)$$
-   where $\boldsymbol{\Sigma}_i = \text{diag}(\sigma_{i,1}^2, \dots, \sigma_{i,11}^2)$ is a diagonal covariance matrix regularized with minimum covariance threshold $\epsilon = 10^{-3}$ to prevent degenerate states.
+
+3. **Emission Probability Distribution** $\mathbf{B}$:
+   The feature vector conditional on regime $S_t = i$ follows a multivariate Gaussian distribution:
+   $$P(\mathbf{x}_t \mid S_t = i) = \mathcal{N}\left(\mathbf{x}_t \mid \boldsymbol{\mu}_i, \boldsymbol{\Sigma}_i\right)$$
+   where:
+   - $\boldsymbol{\mu}_i \in \mathbb{R}^{11}$ is the regime-specific emission mean vector.
+   - $\boldsymbol{\Sigma}_i \in \mathbb{R}^{11 \times 11}$ is a diagonal covariance matrix:
+     $$\boldsymbol{\Sigma}_i = \text{diag}\left(\sigma_{i,1}^2, \sigma_{i,2}^2, \dots, \sigma_{i,11}^2\right)$$
+   - **Regularization Floor**: To prevent degenerate states and singular covariance collapse during Expectation-Maximization (EM), each variance component is strictly bounded from below by a minimum covariance threshold:
+     $$\sigma_{i, j}^2 \ge \epsilon = 10^{-3} \quad (\forall i \in \{1, \dots, 4\}, \, j \in \{1, \dots, 11\})$$
 
 ### Feature Engineering (11 Active Market & Macro Signals)
 
