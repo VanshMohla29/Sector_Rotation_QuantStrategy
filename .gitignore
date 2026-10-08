@@ -31,3 +31,9 @@ alert_runner.log
 *BACKUP*
 *_BACKUP*
 *_backup*
+
+# Output Directory
+output/
+/output/
+output
+
