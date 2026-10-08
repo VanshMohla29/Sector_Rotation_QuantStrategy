@@ -165,11 +165,22 @@ To ensure continuous, 100% real, and survivorship-bias-free data from **January 
 
 #### Mathematical Splicing Formulation
 
-For each sector with top 3 large-cap anchors, the daily composite return is computed from clean forward-filled prices:
-$$r_{\text{proxy}, t} = \frac{1}{3} \sum_{i=1}^3 \ln\left(\frac{P_{i, t}}{P_{i, t-1}}\right)$$
+For each sector with top 3 large-cap anchors, the daily composite proxy return is computed from clean forward-filled prices:
 
-The final return series $r_{\text{sector}, t}$ seamlessly splices the real ETF return with the 3-stock proxy while maintaining automated outlier protection:
-$$r_{\text{sector}, t} = \begin{cases} r_{\text{proxy}, t} & \text{if } r_{\text{ETF}, t} \text{ is NaN (pre-listing) or } |r_{\text{ETF}, t}| > 0.25 \text{ (bad tick)} \\ r_{\text{ETF}, t} & \text{otherwise} \end{cases}$$
+$$
+r_{\text{proxy}}(t) = \frac{1}{3} \sum_{i=1}^3 \ln\left(\frac{P_{i, t}}{P_{i, t-1}}\right)
+$$
+
+The final sector return series $r_{\text{sector}}(t)$ seamlessly splices the real ETF return with the 3-stock proxy while maintaining automated outlier protection:
+
+$$
+r_{\text{sector}}(t) = 
+\begin{cases} 
+r_{\text{proxy}}(t) & \text{if } r_{\text{ETF}}(t) \text{ is NaN (pre-listing) or } |r_{\text{ETF}}(t)| > 0.25 \text{ (bad tick)} \\ 
+r_{\text{ETF}}(t) & \text{otherwise} 
+\end{cases}
+$$
+
 
 This ensures that the backtest reflects actual diversified sector factor returns over the full 11-year cycle without single-stock idiosyncratic noise or flat-line zero artifacts.
 
@@ -202,21 +213,38 @@ Let $S_t \in \{1, 2, 3, 4\}$ denote the unobserved market regime on trading day 
 
 The system is parameterized by $\lambda = (\boldsymbol{\pi}, \mathbf{A}, \mathbf{B})$:
 
-1. **Initial State Distribution** $\boldsymbol{\pi} \in \mathbb{R}^4$:
-   $$\pi_i = P(S_1 = i), \quad \sum_{i=1}^4 \pi_i = 1$$
+**1. Initial State Distribution ($\boldsymbol{\pi} \in \mathbb{R}^4$):**
 
-2. **Transition Probability Matrix** $\mathbf{A} \in \mathbb{R}^{4 \times 4}$:
-   $$A_{ij} = P(S_{t+1} = j \mid S_t = i), \quad \sum_{j=1}^4 A_{ij} = 1$$
+$$
+\pi_i = P(S_1 = i), \quad \sum_{i=1}^4 \pi_i = 1
+$$
 
-3. **Emission Probability Distribution** $\mathbf{B}$:
-   The feature vector conditional on regime $S_t = i$ follows a multivariate Gaussian distribution:
-   $$P(\mathbf{x}_t \mid S_t = i) = \mathcal{N}\left(\mathbf{x}_t \mid \boldsymbol{\mu}_i, \boldsymbol{\Sigma}_i\right)$$
-   where:
-   - $\boldsymbol{\mu}_i \in \mathbb{R}^{11}$ is the regime-specific emission mean vector.
-   - $\boldsymbol{\Sigma}_i \in \mathbb{R}^{11 \times 11}$ is a diagonal covariance matrix:
-     $$\boldsymbol{\Sigma}_i = \text{diag}\left(\sigma_{i,1}^2, \sigma_{i,2}^2, \dots, \sigma_{i,11}^2\right)$$
-   - **Regularization Floor**: To prevent degenerate states and singular covariance collapse during Expectation-Maximization (EM), each variance component is strictly bounded from below by a minimum covariance threshold:
-     $$\sigma_{i, j}^2 \ge \epsilon = 10^{-3} \quad (\forall i \in \{1, \dots, 4\}, \, j \in \{1, \dots, 11\})$$
+**2. Transition Probability Matrix ($\mathbf{A} \in \mathbb{R}^{4 \times 4}$):**
+
+$$
+A_{ij} = P(S_{t+1} = j \mid S_t = i), \quad \sum_{j=1}^4 A_{ij} = 1
+$$
+
+**3. Emission Probability Distribution ($\mathbf{B}$):**
+
+The feature vector conditional on regime $S_t = i$ follows a multivariate Gaussian distribution:
+
+$$
+P(\mathbf{x}_t \mid S_t = i) = \mathcal{N}\left(\mathbf{x}_t \mid \boldsymbol{\mu}_i, \, \boldsymbol{\Sigma}_i\right)
+$$
+
+where $\boldsymbol{\mu}_i \in \mathbb{R}^{11}$ is the regime-specific emission mean vector, and $\boldsymbol{\Sigma}_i \in \mathbb{R}^{11 \times 11}$ is a diagonal covariance matrix:
+
+$$
+\boldsymbol{\Sigma}_i = \text{diag}\left(\sigma_{i,1}^2, \, \sigma_{i,2}^2, \, \dots, \, \sigma_{i,11}^2\right)
+$$
+
+To prevent degenerate states and singular covariance collapse during Expectation-Maximization (EM), each variance component is strictly bounded from below by a minimum covariance threshold:
+
+$$
+\sigma_{i, j}^2 \ge \epsilon = 10^{-3} \quad (\forall i \in \{1, \dots, 4\}, \; j \in \{1, \dots, 11\})
+$$
+
 
 ### Feature Engineering (11 Active Market & Macro Signals)
 
@@ -284,7 +312,11 @@ While regime classification systematically rotates capital into resilient defens
 
 1. **Drawdown Breach Trigger**:
    At the close of each trading session $t$, the portfolio's drawdown from rolling peak equity is monitored:
-   $$DD_t = \frac{\text{NAV}_t - \max_{\tau \le t} \text{NAV}_\tau}{\max_{\tau \le t} \text{NAV}_\tau}$$
+
+$$
+DD_t = \frac{\text{NAV}_t - \max_{\tau \le t} \text{NAV}_\tau}{\max_{\tau \le t} \text{NAV}_\tau}
+$$
+
    If $DD_t \le -12.0\%$ (`STOP_LOSS_DD = -0.12`), the **T+0 Capital Protection Exit** executes immediately on day $t$.
 2. **Immediate T+0 De-risking to 100% Cash / Liquid**:
    Execution is immediate (T+0): all equity ETF positions are liquidated on day $t$ as soon as the -12.0% threshold is reached, capping the drawdown at -12.0% (less 17 bps transaction costs: STT, exchange turnover fees, GST, SEBI fees, stamp duty, slippage). The portfolio moves 100% of capital into safe liquid cash reserves earning the daily RBI repo yield ($5.25\% / 252$).
@@ -292,9 +324,17 @@ While regime classification systematically rotates capital into resilient defens
    To prevent premature re-entry into an ongoing falling-knife waterfall, the portfolio must remain parked in 100% cash for at least **5 consecutive trading days** (`STOP_COOLDOWN_DAYS = 5`).
 4. **20-Day Simple Moving Average (20 SMA) Re-Entry Filter**:
    After the 5-day cooldown has elapsed, the model monitors the NIFTY 50 index benchmark relative to its **20-day Simple Moving Average**:
-   $$\text{SMA}_{20, t} = \frac{1}{20} \sum_{i=0}^{19} P_{t-i}$$
+
+$$
+\text{SMA}_{20, t} = \frac{1}{20} \sum_{i=0}^{19} P_{t-i}
+$$
+
    Re-entry triggers on day $t+1$ as soon as:
-   $$P_{\text{NIFTY}, t} > \text{SMA}_{20, t} \quad \text{and} \quad \text{DaysInCash} \ge 5$$
+
+$$
+P_{\text{NIFTY}, t} > \text{SMA}_{20, t} \quad \text{and} \quad \text{DaysInCash} \ge 5
+$$
+
    Upon re-entry, the portfolio repurchases the optimal sector allocation dictated by the active HMM regime at that moment, resetting peak equity so that subsequent drawdown is measured from the fresh re-entry level.
 
 ---
@@ -418,7 +458,11 @@ To evaluate whether regime classification and dynamic sector rotation are fragil
 ##### Stress-Testing Methodology:
 - **Zero Training Contamination**: The expanding historical training data ($X_{\text{train}}$), HMM parameter estimation, Dirichlet transition matrix regularization, and SLSQP sector weight optimizations remain strictly unperturbed.
 - **Controlled Testing Jitter**: Zero-mean Gaussian perturbation is injected **strictly into the out-of-sample testing features ($X_{\text{test}}$)** on each fold before the causal online forward pass (`online_forward_decode`):
-  $$X_{\text{test, noisy}} = X_{\text{test}} + \epsilon, \quad \epsilon \sim \mathcal{N}\left(0, \sigma_{\text{noise}}^2 \odot \text{diag}(\Sigma_{\text{train}})\right)$$
+
+$$
+X_{\text{test, noisy}} = X_{\text{test}} + \epsilon, \quad \epsilon \sim \mathcal{N}\left(0, \, \sigma_{\text{noise}}^2 \odot \text{diag}(\Sigma_{\text{train}})\right)
+$$
+
 - Evaluates feature degradation from 0% (clean baseline) up to 50% (severe market noise / data feed corruption) across multi-seed Monte Carlo simulations.
 
 ##### Monte Carlo Robustness Scorecard Across Noise Levels:
