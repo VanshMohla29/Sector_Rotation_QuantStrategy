@@ -1128,6 +1128,7 @@ def label_regimes(model, X_scaled, feat, df):
         'NIFTY':       df.loc[feat.index, 'NIFTY'],
         'Returns':     df.loc[feat.index, 'Returns'],
         'VIX':         df.loc[feat.index, 'VIX'],
+        'vix_vs_ma20': feat.loc[feat.index, 'vix_vs_ma20'] if 'vix_vs_ma20' in feat.columns else (df.loc[feat.index, 'VIX'] / df.loc[feat.index, 'VIX'].rolling(20).mean() - 1),
         'VIX_diff_20': feat.loc[feat.index, 'vix_diff_20'] if 'vix_diff_20' in feat.columns else df.loc[feat.index, 'VIX'] - df.loc[feat.index, 'VIX'].shift(20),
         'RepoRate':    df.loc[feat.index, 'RepoRate'],
         'GSecYield10': df.loc[feat.index, 'GSecYield10'],
@@ -1895,18 +1896,23 @@ def plot_regime_detection(result, strategy_capital, buy_hold_capital, out_dir):
     ax2.legend(loc='upper right', fontsize=8, framealpha=0.3, facecolor='#0f0f11', edgecolor='#2a2a35')
     ax2.set_xlim(result.index[0], result.index[-1])
 
-    # Panel 3: 20-Day VIX Difference (VIX momentum & shock detector)
+    # Panel 3: India VIX Relative to 20-Day SMA (vix_vs_ma20)
     ax3 = fig.add_subplot(gs[2, :])
     ax3.set_facecolor('#0f0f11')
-    vix_diff_20 = result['VIX_diff_20'] if 'VIX_diff_20' in result.columns else (result['VIX'] - result['VIX'].shift(20))
-    ax3.plot(result.index, vix_diff_20, color='#f59e0b', lw=0.9, label='20-Day VIX Difference (VIX_t - VIX_{t-20})')
+    if 'vix_vs_ma20' in result.columns:
+        vix_vs_ma20 = result['vix_vs_ma20']
+    elif 'VIX_vs_MA20' in result.columns:
+        vix_vs_ma20 = result['VIX_vs_MA20']
+    else:
+        vix_vs_ma20 = result['VIX'] / result['VIX'].rolling(20).mean() - 1
+    ax3.plot(result.index, vix_vs_ma20, color='#f59e0b', lw=0.9, label='India VIX vs 20-Day SMA (VIX / MA20 - 1)')
     ax3.axhline(0.0, color='#9ca3af', lw=0.8, ls='--', alpha=0.7, label='Zero Neutral Line')
-    ax3.axhline(5.0, color='#ef4444', lw=0.8, ls=':', alpha=0.8, label='Volatility Spike (+5.0 pts)')
-    ax3.axhline(-5.0, color='#10b981', lw=0.8, ls=':', alpha=0.8, label='Volatility Crush (-5.0 pts)')
-    ax3.fill_between(result.index, vix_diff_20, 0, where=(vix_diff_20 > 0), color='#ef4444', alpha=0.15)
-    ax3.fill_between(result.index, vix_diff_20, 0, where=(vix_diff_20 <= 0), color='#10b981', alpha=0.15)
-    ax3.set_title('Market Volatility Momentum — 20-Day VIX Difference (VIX_t - VIX_{t-20})', fontsize=10, color='#9ca3af', pad=6)
-    ax3.set_ylabel('VIX 20d Change (pts)', fontsize=9)
+    ax3.axhline(0.20, color='#ef4444', lw=0.8, ls=':', alpha=0.8, label='Volatility Spike (+20%)')
+    ax3.axhline(-0.15, color='#10b981', lw=0.8, ls=':', alpha=0.8, label='Volatility Crush (-15%)')
+    ax3.fill_between(result.index, vix_vs_ma20, 0, where=(vix_vs_ma20 > 0), color='#ef4444', alpha=0.15)
+    ax3.fill_between(result.index, vix_vs_ma20, 0, where=(vix_vs_ma20 <= 0), color='#10b981', alpha=0.15)
+    ax3.set_title('Market Volatility Shock & Crush — India VIX Relative to 20-Day SMA (vix_vs_ma20)', fontsize=10, color='#9ca3af', pad=6)
+    ax3.set_ylabel('VIX vs 20d SMA', fontsize=9)
     ax3.grid(True, lw=0.3)
     ax3.legend(loc='upper right', fontsize=8, framealpha=0.3, facecolor='#0f0f11', edgecolor='#2a2a35')
     ax3.set_xlim(result.index[0], result.index[-1])
@@ -2612,15 +2618,8 @@ def plot_new_macro_signals(result, out_dir):
     print("✓ Saved: fig8_new_macro_signals.png")
 
 
-def main():
-    print("=" * 70)
-    print("  INDIA MARKET REGIME DETECTOR  —  v2 (100% Real Live Data)")
-    print("  4-State Gaussian HMM  |  Full Production Implementation")
-    print("=" * 70)
-
-    OUT_DIR = os.path.join(os.path.dirname(__file__), 'output')
-    os.makedirs(OUT_DIR, exist_ok=True)
-
+def apply_dark_figure_style():
+    """Apply unified dark monospace aesthetic across all figures."""
     plt.style.use('dark_background')
     plt.rcParams.update({
         'font.family':      'monospace',
@@ -2633,6 +2632,18 @@ def main():
         'grid.color':       '#1e1e28',
         'text.color':       '#e5e7eb',
     })
+
+
+def main():
+    print("=" * 70)
+    print("  INDIA MARKET REGIME DETECTOR  —  v2 (100% Real Live Data)")
+    print("  4-State Gaussian HMM  |  Full Production Implementation")
+    print("=" * 70)
+
+    OUT_DIR = os.path.join(os.path.dirname(__file__), 'output')
+    os.makedirs(OUT_DIR, exist_ok=True)
+
+    apply_dark_figure_style()
 
     # ── 1. Load real live market data ─────────────────────────────────
     print("\n[1] Fetching 100% real live market data (NIFTY 50, India VIX, G-Sec Yields, CPI, IIP)...")
@@ -2765,8 +2776,20 @@ def main():
 
 
 
+    # ── 11. Parameter Stability Test & Heatmap Dashboard ─────────
+    print("\n[11] Running Parameter Stability Test & Generating Heatmap Dashboard (fig10)...")
+    try:
+        from parameter_stability_test import perform_parameter_stability_analysis, plot_parameter_stability_dashboard, save_summary_data
+        stab_results = perform_parameter_stability_analysis(result, df_sec, learned_sector_mix)
+        plot_parameter_stability_dashboard(stab_results, OUT_DIR)
+        save_summary_data(stab_results, OUT_DIR)
+        print("✓ Saved: fig10_parameter_stability.png, parameter_stability_summary.csv, and report JSON")
+    except Exception as e:
+        print(f"⚠ Parameter stability test skipped: {e}")
+
     # ── 12. Visualisations (Pure Sector Rotation Strategy & Paper Portfolio) ─
-    print("\n[12] Generating figures (1-9) featuring Pure Sector Rotation & Live Paper Portfolio...")
+    print("\n[12] Generating figures (1-10) featuring Pure Sector Rotation & Live Paper Portfolio...")
+    apply_dark_figure_style()
     plot_regime_detection(result, strat_cap, bh_cap, OUT_DIR)
     plot_strategy_backtest(result, strat_ret, strat_cap, bh_cap, OUT_DIR)
     plot_hmm_internals(result, strat_ret, model, label_map, scores, OUT_DIR)
@@ -2809,9 +2832,10 @@ def main():
         'fig3_hmm_internals.png', 'fig4_confidence_intervals.png',
         'fig5_model_selection.png', 'fig6_walk_forward.png',
         'fig7_sector_rotation.png', 'fig8_new_macro_signals.png',
-        'fig9_paper_portfolio.png',
+        'fig9_paper_portfolio.png', 'fig10_parameter_stability.png',
         'paper_portfolio_history.csv',
         'regime_history_v2.csv', 'walk_forward_summary.csv',
+        'parameter_stability_summary.csv', 'parameter_stability_report.json',
         'learned_sector_mix.json', 'hmm_model.pkl', 'hmm_scaler.pkl',
         'label_map.pkl', 'regime_api.py'
     ]
@@ -2820,7 +2844,7 @@ def main():
         dst = os.path.join(ROOT_DIR, fname)
         if os.path.exists(src):
             shutil.copy2(src, dst)
-    print("✓ Synced all 9 figures, model weights, and summary CSVs to project root: " + ROOT_DIR)
+    print("✓ Synced all 10 figures, model weights, and summary CSVs to project root: " + ROOT_DIR)
 
     print("\n" + "="*70)
     print("  ALL NEXT-STEPS IMPLEMENTED (100% REAL LIVE DATA)  ✓")
@@ -2836,6 +2860,9 @@ def main():
     fig7_sector_rotation.png    — NSE sector rotation heatmap + returns
     fig8_new_macro_signals.png  — Yield curve, CPI, IIP, real rate, and regime phase space
     fig9_paper_portfolio.png    — Live paper trading portfolio dashboard (OOS, whole units, regulatory costs)
+    fig10_parameter_stability.png — Multi-dimensional parameter stability heatmaps (Sharpe, CAGR, Max DD, MA, Min-Hold)
+    parameter_stability_summary.csv — Quantitative stability grid records
+    parameter_stability_report.json — Machine-readable parameter robustness audit
     regime_api.py               — FastAPI REST service skeleton
     regime_history_v2.csv       — Extended regime history
     walk_forward_summary.csv    — Per-fold OOS metrics

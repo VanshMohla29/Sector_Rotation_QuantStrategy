@@ -68,8 +68,8 @@ The **India Market Regime Detector (v2)** provides an institutional-grade quanti
 - **Institutional Bad-Tick Filter**: Real-time outlier filter detects and sanitizes data feed glitches (such as Yahoo Finance's December 2019 decimal shift in `BANKBEES.NS` that previously produced an artificial -63% drawdown).
 - **Zero-Lookahead Walk-Forward Validation**: Eliminates all 6 lookahead leakage vectors (batch Viterbi decoding, retroactive anti-whipsaw smoothing, global sector weights, zero-lag macro publication, contemporaneous execution, and fold label switching). Reports dual out-of-sample metrics across 8 annual cross-cycle folds (2019–2026): **+30.8% mean fold return** (0.81 mean Sharpe, 1.26 mean Profit Factor) alongside true continuous **+22.3% chained OOS CAGR** (0.69 chained Sharpe, 1.20 chained Profit Factor) with only 9.1 switches per fold.
 - **Live Paper Trading Execution Engine (`paper_portfolio.py`)**: Freezes the trained model and runs forward out-of-sample simulation using actual EOD ETF market prices, down-rounding allocations to whole integer units, tracking uninvested cash, and deducting realistic Indian regulatory taxes and charges (STT, exchange turnover, GST, SEBI charges, stamp duty, DP charges, and slippage).
-- **9 Publication-Grade Visualizations**: High-resolution dark-theme charts covering regime paths, backtests, HMM internal emissions, bootstrap distributions, model selection, walk-forward folds, sector rotation heatmaps, macro phase spaces, and the live Paper Trading Portfolio Dashboard featuring a Donut Pie Chart allocation.
-- **Production Delivery**: Real-time FastAPI REST microservice and interactive long-polling Telegram Bot with full command controls (`/status`, `/portfolio`, `/fig9`, `/macro`, `/retrain`).
+- **10 Publication-Grade Visualizations**: High-resolution dark-theme charts covering regime paths, backtests, HMM internal emissions, bootstrap distributions, model selection, walk-forward folds, sector rotation heatmaps, macro phase spaces, the live Paper Trading Portfolio Dashboard featuring a Donut Pie Chart allocation, and multi-dimensional parameter stability heatmaps.
+- **Production Delivery**: Real-time FastAPI REST microservice and interactive long-polling Telegram Bot with full command controls (`/status`, `/portfolio`, `/fig9`, `/macro`, `/stability`, `/retrain`).
 
 ---
 
@@ -567,13 +567,13 @@ Total friction on portfolio rebalancing typically totals ~₹1,683 per ₹10,00,
 
 ---
 
-## 6. Comprehensive Visualisation Suite (Figures 1–9)
+## 6. Comprehensive Visualisation Suite (Figures 1–10)
 
-The pipeline automatically generates **9 publication-grade figures** saved to both `/output/` and the project root directory:
+The pipeline automatically generates **10 publication-grade figures** saved to both `/output/` and the project root directory:
 
 | Figure | Filename | Key Panels & Visual Content | Quantitative Interpretation |
 |---|---|---|---|
-| **Fig 1** | `fig1_regime_detection.png` | NIFTY 50 price path with color-coded regime spans, posterior probabilities, 20-Day VIX Difference (vix_diff_20) with ±5pt spike/crush alerts and directional fills, equity curve, and regime distribution pie. | High-level diagnostic showing regime separation, posterior certainty, VIX momentum shocks, and Sector Rotation compounding trajectory. |
+| **Fig 1** | `fig1_regime_detection.png` | NIFTY 50 price path with color-coded regime spans, posterior probabilities, India VIX vs 20-Day SMA (`vix_vs_ma20`) with +20% / -15% volatility spike/crush alerts and directional fills, equity curve, and regime distribution pie. | High-level diagnostic showing regime separation, posterior certainty, VIX relative momentum shocks, and Sector Rotation compounding trajectory. |
 | **Fig 2** | `fig2_strategy_backtest.png` | Cumulative wealth: **Sector Rotation (+23.18% CAGR, -25.02% Max DD) vs Buy & Hold (+10.92% CAGR, -38.44% Max DD)**, underwater drawdown with -12% Stop guideline, annual returns. | Validates persistent multi-year alpha generation (+12.26% p.a.) and superior capital preservation via the 20 SMA stop engine. |
 | **Fig 3** | `fig3_hmm_internals.png` | Regularized transition matrix heatmap, emission distributions across features, and regime persistence CDF. | Verifies economic validity and stability of the underlying Markov process. |
 | **Fig 4** | `fig4_confidence_intervals.png` | 2,000-trial bootstrap distributions for Sharpe, Annual Return, and rolling posterior confidence. | Statistical proof that outperformance is not an artifact of random sampling. |
@@ -582,6 +582,25 @@ The pipeline automatically generates **9 publication-grade figures** saved to bo
 | **Fig 7** | `fig7_sector_rotation.png` | 8-ETF sector allocation heatmap and dynamic regime donut allocation charts. | Illustrates the intuitive economic rotation (Autos/Metals in Bull, IT/Pharma in HighVol, etc.). |
 | **Fig 8** | `fig8_new_macro_signals.png` | Sovereign yield curve spread (10Y-2Y), CPI, IIP, WPI, and 2D regime phase spaces. | Connects macroeconomic cycles with equity regime transitions. |
 | **Fig 9** | `fig9_paper_portfolio.png` | Live Paper Trading Portfolio Dashboard: NAV vs NIFTY benchmark with regime background shading, Current Portfolio Donut Pie Chart, Drawdown tracking with -12% Stop line, Daily P&L, Current Holdings Table, and Performance Summary card with itemized regulatory friction charges. | Validates true forward out-of-sample execution on actual EOD ETF prices with whole share rounding and full SEBI/IT Act regulatory tax and fee deductions. |
+| **Fig 10** | `fig10_parameter_stability.png` | Multi-dimensional parameter stability heatmaps: Sharpe Ratio Grid (Stop DD vs Cooldown), Annual Return Grid, Max Drawdown Containment Grid, Re-entry MA Window Sensitivity (5 to 50 SMA), Causal Regime Smoothing Lockout (1 to 14 days), and 1D Sensitivity Plateau slices. | Mathematically verifies that strategy alpha is situated on an expansive, resilient plateau, with 100% of tested parameter pairs outperforming Buy & Hold. |
+
+### 6.1 Multi-Dimensional Parameter Stability Analysis (`fig10_parameter_stability.png`)
+
+To verify that the Sector Rotation Strategy does not suffer from data mining, backtest overfitting, or knife-edge parameter sensitivity, the system performs a multi-dimensional parameter stability stress test (`parameter_stability_test.py`):
+
+1. **Risk Management Grid (Stop-Loss DD vs. Cash Cooldown Days)**:
+   - Evaluates a 9×8 matrix (72 combinations) spanning Stop-Loss Drawdowns ($\text{Stop}_{DD} \in [-6\%, -25\%]$) and Cooldown Lockouts ($T_{\text{cooldown}} \in [1, 20]\text{ days}$).
+   - **Sharpe Ratio Stability**: Strategy Sharpe spans $[0.71, 1.00]$ (mean $0.85 \pm 0.04$) across the entire surface.
+   - **CAGR Stability**: Annualized return remains elevated between $+19.1\%$ and $+23.9\%$.
+   - **Drawdown Containment**: Max drawdown is strictly held within $[-15.7\%, -27.5\%]$ across all configurations (vs. $-38.4\%$ for NIFTY 50 Buy & Hold).
+2. **Trend Re-entry Filter Sensitivity (MA Window)**:
+   - Sweeps moving average re-entry lengths from 5 to 50 trading days across stop-loss thresholds. Sharpe remains stable within $[0.76, 1.03]$ (mean $0.86$), confirming the 20-day SMA is a robust midpoint balancing prompt re-entry against false trend signals.
+3. **Causal Regime Smoothing Sensitivity (Min-Hold Days)**:
+   - Sweeps anti-whipsaw lockout periods from 1 to 14 days across stop-loss thresholds. Sharpe remains stable within $[0.77, 1.02]$, verifying that the 5-day minimum holding filter avoids whipsaw without introducing parameter fragility.
+4. **Local Plateau & Robustness Metrics**:
+   - **Local 3×3 Neighborhood**: Centered at baseline $(-12\% \text{ DD}, 5\text{d Cooldown})$, the local 3×3 neighborhood exhibits a mean Sharpe of $0.85 \pm 0.04$ with a **Coefficient of Variation of only 4.8%**, confirming an expansive operating plateau.
+   - **Benchmark Dominance**: **100% of tested parameter combinations beat Buy & Hold** (worst-case strategy Sharpe of $0.71$ is $+168\%$ higher than Buy & Hold's $0.27$).
+   - Full tabular records are exported to `parameter_stability_summary.csv` and machine-readable `parameter_stability_report.json`.
 
 ---
 
@@ -707,6 +726,7 @@ python3 telegram_bot.py
 | `/chart` | Regime detection overview chart (Fig 1) |
 | `/backtest` | Strategy vs Buy & Hold backtest chart (Fig 2) |
 | `/heatmap` | Sector rotation heatmap (Fig 7) |
+| `/stability` | Parameter stability heatmaps & scorecard (Fig 10) |
 | `/walkforward` | Walk-forward OOS chart (Fig 6) + summary statistics |
 | `/retrain` | Re-runs the full training pipeline (~5 min) with lock protection |
 | `/help` | Complete command help reference |
@@ -722,16 +742,20 @@ python3 telegram_bot.py
 ```
 Regime_detector_final/
 ├── regime_detector_v2.py       # Core Pipeline: HMM Training, Sector Rotation, Visualizations, API Code
+├── parameter_stability_test.py # Parameter Stability Stress Test Engine & Multi-Grid Heatmap Generator
 ├── paper_portfolio.py          # Live Paper Trading Execution Engine (Frozen Model, Whole Units, Indian Costs)
 ├── regime_api.py               # Standalone FastAPI Production REST Microservice
 ├── telegram_bot.py             # Interactive Telegram Bot Interface with Live Portfolio Commands
 ├── paper_portfolio_history.csv # Daily OOS Portfolio State Log (NAV, Units, P&L, Regulatory Charges)
 ├── regime_history_v2.csv       # 11-Year Daily Regime History Log (2015-2026, 2,591 sessions)
 ├── walk_forward_summary.csv    # 8-Fold Out-of-Sample Walk-Forward Validation Metrics
+├── parameter_stability_summary.csv # Comprehensive Parameter Grid Records (Sharpe, CAGR, Max DD, Calmar)
+├── parameter_stability_report.json # Machine-Readable Parameter Robustness Audit & Plateau Statistics
 ├── learned_sector_mix.json     # Dynamically Learned Optimal Sector Allocations (SLSQP Weights)
 ├── hmm_model.pkl               # Serialized GaussianHMM Model Weights
 ├── hmm_scaler.pkl              # Fitted QuantileTransformer Parameters (Normal distribution, 1000 quantiles)
 ├── label_map.pkl               # State-to-Regime Anchoring Mapping
+├── fig10_parameter_stability.png # Multi-Panel Parameter Stability Heatmaps Dashboard
 ├── output/                     # Comprehensive Output Directory (Figures & Mirrored Artifacts)
 │   ├── fig1_regime_detection.png
 │   ├── fig2_strategy_backtest.png
@@ -741,7 +765,8 @@ Regime_detector_final/
 │   ├── fig6_walk_forward.png
 │   ├── fig7_sector_rotation.png
 │   ├── fig8_new_macro_signals.png
-│   └── fig9_paper_portfolio.png
+│   ├── fig9_paper_portfolio.png
+│   └── fig10_parameter_stability.png
 └── README.md                   # Complete Institutional Documentation
 ```
 

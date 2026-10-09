@@ -37,3 +37,6 @@ output/
 /output/
 output
 
+# Cache files
+sector_returns_cache.csv
+

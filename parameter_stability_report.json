@@ -1,0 +1,35 @@
+{
+  "baseline_parameters": {
+    "stop_loss_dd": -0.12,
+    "cooldown_days": 5,
+    "reentry_ma_window": 20,
+    "reentry_ma_type": "SMA",
+    "regime_min_hold_days": 5
+  },
+  "baseline_performance": {
+    "sharpe_ratio": 0.872,
+    "annualized_return_pct": 23.19,
+    "max_drawdown_pct": -25.02
+  },
+  "benchmark_nifty_bh": {
+    "sharpe_ratio": 0.266,
+    "annualized_return_pct": 10.84,
+    "max_drawdown_pct": -38.44
+  },
+  "plateau_neighborhood_3x3": {
+    "mean_sharpe": 0.847,
+    "std_sharpe": 0.041,
+    "coefficient_of_variation_pct": 4.85,
+    "min_sharpe": 0.777,
+    "max_sharpe": 0.895
+  },
+  "global_parameter_grid": {
+    "mean_sharpe": 0.848,
+    "std_sharpe": 0.054,
+    "min_sharpe": 0.711,
+    "max_sharpe": 1.004,
+    "coefficient_of_variation_pct": 6.4,
+    "pct_combinations_beating_bh": 100.0,
+    "worst_case_outperformance_vs_bh_pct": 167.5
+  }
+}
